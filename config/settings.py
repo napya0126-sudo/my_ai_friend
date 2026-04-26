@@ -6,6 +6,14 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# エロ専用に使う別 Telegram チャットID（非公開スーパーグループ等）。未設定なら 1 対 1 でも従来どおり。
+_erotic_raw = os.getenv("TELEGRAM_EROTIC_CHAT_ID", "").strip()
+TELEGRAM_EROTIC_CHAT_ID: int | None
+try:
+    TELEGRAM_EROTIC_CHAT_ID = int(_erotic_raw) if _erotic_raw else None
+except ValueError:
+    TELEGRAM_EROTIC_CHAT_ID = None
+
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 FAL_API_KEY        = os.getenv("FAL_API_KEY")
 ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY")

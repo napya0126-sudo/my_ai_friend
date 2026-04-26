@@ -6,7 +6,7 @@ from html import escape
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-from config.settings import TELEGRAM_BOT_TOKEN, MODEL_NSFW
+from config.settings import TELEGRAM_BOT_TOKEN, MODEL_NSFW, TELEGRAM_EROTIC_CHAT_ID
 from src.conversation import build_messages, append_assistant_reply
 from src.llm import chat_claude, chat_openrouter
 from src.image_gen import generate_image
@@ -48,6 +48,45 @@ HELP_TEXT = """
 
 🔄 /help  — このメッセージ
 """.strip()
+
+EROTIC_USE_DEDICATED_TELEGRAM = (
+    "🔥 エロ会話は、あなたが用意した「エロ専用の別 Telegram チャット」"
+    "（非公開のスーパーグループ推奨。Botを管理者として追加）で行ってください。\n"
+    "そのスーパーグループのチャットIDを <code>TELEGRAM_EROTIC_CHAT_ID</code> に設定していますか？"
+    " この1対1チャットでエロを使うには、その行を <code>.env</code> から削除（空）にしてください。"
+)
+
+
+def _is_dedicated_erotic_telegram_chat(update: Update) -> bool:
+    if TELEGRAM_EROTIC_CHAT_ID is None or update.effective_chat is None:
+        return False
+    return update.effective_chat.id == TELEGRAM_EROTIC_CHAT_ID
+
+
+def _is_private_1o1_bot_chat(update: Update) -> bool:
+    return bool(update.effective_chat and update.effective_chat.type == "private")
+
+
+def _sync_telegram_chat_with_mode(user_id: int, update: Update) -> None:
+    """Erotic split: 専用群では常に erotic+erotic_ch。1対1 では必ず非エロ扱いに戻す。"""
+    if TELEGRAM_EROTIC_CHAT_ID is None:
+        return
+    if _is_dedicated_erotic_telegram_chat(update):
+        set_mode(user_id, EROTIC)
+        set_channel(user_id, EROTIC_CH)
+    elif _is_private_1o1_bot_chat(update):
+        if get_mode(user_id) == EROTIC:
+            set_mode(user_id, CHAT)
+        if get_channel(user_id) == EROTIC_CH:
+            set_channel(user_id, GENERAL)
+
+
+def _help_text() -> str:
+    t = HELP_TEXT
+    if TELEGRAM_EROTIC_CHAT_ID is not None:
+        t += "\n\n<i>🔐 エロ専用の別Telegram（スーパーグループ）を .env の TELEGRAM_EROTIC_CHAT_ID で有効中。"
+        " エロ会話はそちらでのみ行えます。</i>"
+    return t
 
 
 def _clean(text: str) -> str:
@@ -140,15 +179,21 @@ def _reply_delay(reply: str) -> float:
 # ---------------------------------------------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(HELP_TEXT, parse_mode="HTML")
+    await update.message.reply_text(_help_text(), parse_mode="HTML")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(HELP_TEXT, parse_mode="HTML")
+    await update.message.reply_text(_help_text(), parse_mode="HTML")
 
 
 async def cmd_meet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.effective_user.id
+    _sync_telegram_chat_with_mode(uid, update)
+    if TELEGRAM_EROTIC_CHAT_ID and _is_dedicated_erotic_telegram_chat(update):
+        await update.message.reply_text(
+            "📍 一緒にいるモードは、Bot への 1対1 チャットで /meet を使ってください。"
+        )
+        return
     set_mode(uid, IN_PERSON)
     set_channel(uid, GENERAL)
     await update.message.reply_text("📍 In-person mode  |  🗂 general channel")
@@ -156,6 +201,10 @@ async def cmd_meet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_sex(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.effective_user.id
+    _sync_telegram_chat_with_mode(uid, update)
+    if TELEGRAM_EROTIC_CHAT_ID and _is_private_1o1_bot_chat(update):
+        await update.message.reply_text(EROTIC_USE_DEDICATED_TELEGRAM, parse_mode="HTML")
+        return
     set_mode(uid, EROTIC)
     set_channel(uid, EROTIC_CH)
     await update.message.reply_text("🔥 Erotic mode  |  🗂 erotic channel")
@@ -163,6 +212,12 @@ async def cmd_sex(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.effective_user.id
+    _sync_telegram_chat_with_mode(uid, update)
+    if TELEGRAM_EROTIC_CHAT_ID and _is_dedicated_erotic_telegram_chat(update):
+        await update.message.reply_text(
+            "💬 普段の会話は Bot への 1対1 で /chat してください。ここはエロ専用の Telegram です。"
+        )
+        return
     set_mode(uid, CHAT)
     set_channel(uid, GENERAL)
     await update.message.reply_text("💬 Chat mode  |  🗂 general channel")
@@ -170,6 +225,7 @@ async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    _sync_telegram_chat_with_mode(user_id, update)
     mode = get_mode(user_id)
     channel = get_channel(user_id)
     mode_labels = {CHAT: "💬 Chat", IN_PERSON: "📍 In-person", EROTIC: "🔥 Erotic"}
@@ -182,6 +238,7 @@ async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.effective_user.id
+    _sync_telegram_chat_with_mode(uid, update)
     if not context.args:
         channel = get_channel(uid)
         ch_labels = {GENERAL: "🗂 general", DIARY: "🗂 diary", EROTIC_CH: "🗂 erotic"}
@@ -193,6 +250,19 @@ async def cmd_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(
             f"チャンネルは general / diary / erotic のいずれかを指定してください。"
         )
+        return
+
+    if (
+        TELEGRAM_EROTIC_CHAT_ID
+        and _is_dedicated_erotic_telegram_chat(update)
+        and requested != EROTIC_CH
+    ):
+        await update.message.reply_text(
+            "ここはエロ専用の Telegram です。/ch general や /ch diary は 1対1 チャットで行ってください。"
+        )
+        return
+    if requested == EROTIC_CH and TELEGRAM_EROTIC_CHAT_ID and _is_private_1o1_bot_chat(update):
+        await update.message.reply_text(EROTIC_USE_DEDICATED_TELEGRAM, parse_mode="HTML")
         return
 
     set_channel(uid, requested)
@@ -211,6 +281,7 @@ async def cmd_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def cmd_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    _sync_telegram_chat_with_mode(user_id, update)
     mode = get_mode(user_id)
     args_text = " ".join(context.args) if context.args else ""
 
@@ -241,6 +312,9 @@ async def cmd_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_daily(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    if TELEGRAM_EROTIC_CHAT_ID and _is_dedicated_erotic_telegram_chat(update):
+        await update.message.reply_text("📓 /daily は Bot への 1対1 チャットで使ってください。")
+        return
     state = get_daily_state(user_id)
     if state and state.get("active"):
         await update.message.reply_text(
@@ -312,6 +386,9 @@ async def cmd_usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
+    if TELEGRAM_EROTIC_CHAT_ID and _is_dedicated_erotic_telegram_chat(update):
+        await update.message.reply_text("✅ /done も 1対1 チャットで行ってください。")
+        return
     state = get_daily_state(user_id)
     if not state or not state.get("active"):
         await update.message.reply_text("アクティブな /daily セッションはありません。")
@@ -330,10 +407,16 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     user_text = update.message.text
+    _sync_telegram_chat_with_mode(user_id, update)
 
     # If a /daily session is active, route there
     state = get_daily_state(user_id)
     if state and state.get("active"):
+        if TELEGRAM_EROTIC_CHAT_ID and _is_dedicated_erotic_telegram_chat(update):
+            await update.message.reply_text(
+                "振り返り /daily の続きは、Bot への 1対1 チャットでお願いします。"
+            )
+            return
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id, action="typing"
         )
