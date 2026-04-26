@@ -1,8 +1,10 @@
+import asyncio
 import httpx
 import logging
 from config.settings import (
     FAL_API_KEY, IMAGE_SIZE, IMAGE_STEPS,
     IMAGE_MODEL_SFW, IMAGE_MODEL_NSFW,
+    NOVITA_API_KEY, NOVITA_MODEL,
 )
 from config.character import IMAGE_PROMPT_BASE
 from src.db import log_usage
@@ -15,13 +17,16 @@ NEGATIVE_PROMPT = (
     "cartoon, anime, extra limbs, mutated, censored, mosaic, pixelated genitals"
 )
 
+NEGATIVE_PROMPT_NSFW = (
+    "blurry, low quality, deformed, ugly, bad anatomy, watermark, signature, text, "
+    "cartoon, anime, extra limbs, mutated hands, extra fingers, bad hands, "
+    "censored, mosaic, pixelated, black box, black rectangle, "
+    "(worst quality:2), (low quality:2), amateur, sketch"
+)
+
 NSFW_KEYWORDS = ["sex", "naked", "nude", "undress", "underwear", "erotic", "porn",
                  "裸", "セックス", "エロ", "下着", "ヌード", "脱い"]
 
-# NSFWシーン別プロンプトはローカル専用の config/nsfw_scenes.py から読み込む。
-# そのファイルは .gitignore 済みで GitHub には存在しない。
-# ファイルがない環境では空リストにフォールバックし、汎用プロンプトが使われる。
-# シーンを追加・編集したい場合は config/nsfw_scenes.py を直接編集すること。
 try:
     from config.nsfw_scenes import NSFW_SCENE_MAP
 except ImportError:
@@ -42,7 +47,8 @@ def _build_erotic_prompt(context: str) -> str:
         IMAGE_PROMPT_BASE
         + f", {scene}, bedroom setting, soft warm lighting, "
         + "natural skin texture, photorealistic, shallow depth of field, "
-        + "explicit nudity, uncensored, NSFW, detailed body"
+        + "explicit nudity, uncensored, NSFW, detailed body, "
+        + "masterpiece, best quality, ultra-detailed, 8k"
     )
 
 
@@ -65,21 +71,86 @@ def _build_contextual_prompt(context: str) -> str:
         return IMAGE_PROMPT_BASE + ", casual everyday outfit, natural lighting"
 
 
-async def generate_image(context: str = "", erotic: bool = False) -> bytes | None:
-    prompt = _build_erotic_prompt(context) if erotic else _build_contextual_prompt(context)
-    model = IMAGE_MODEL_NSFW if erotic else IMAGE_MODEL_SFW
-    logger.info(f"Generating image (erotic={erotic}, model={model}) with prompt: {prompt[:120]}...")
+# ---------------------------------------------------------------------------
+# NovitaAI — async txt2img (NSFW 特化)
+# ---------------------------------------------------------------------------
 
+_NOVITA_TXT2IMG = "https://api.novita.ai/v3/async/txt2img"
+_NOVITA_RESULT  = "https://api.novita.ai/v3/async/task-result"
+
+
+async def _generate_novita(prompt: str) -> bytes:
+    """Submit → poll → download via NovitaAI."""
+    headers = {
+        "Authorization": f"Bearer {NOVITA_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "extra": {
+            "enable_nsfw_detection": False,
+            "response_image_type": "jpeg",
+        },
+        "request": {
+            "model_name": NOVITA_MODEL,
+            "prompt": prompt,
+            "negative_prompt": NEGATIVE_PROMPT_NSFW,
+            "width": 512,
+            "height": 768,
+            "steps": 30,
+            "image_num": 1,
+            "guidance_scale": 7,
+            "sampler_name": "DPM++ 2M Karras",
+            "seed": -1,
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        # 1. Submit
+        resp = await client.post(_NOVITA_TXT2IMG, headers=headers, json=payload)
+        resp.raise_for_status()
+        task_id = resp.json()["task_id"]
+        logger.info(f"[NovitaAI] task submitted: {task_id}")
+
+        # 2. Poll until finished (max 90s)
+        for attempt in range(18):
+            await asyncio.sleep(5)
+            result = await client.get(
+                _NOVITA_RESULT,
+                headers=headers,
+                params={"task_id": task_id},
+            )
+            result.raise_for_status()
+            data = result.json()
+            status = data.get("task", {}).get("status")
+            logger.info(f"[NovitaAI] poll #{attempt + 1} status={status}")
+
+            if status == "TASK_STATUS_SUCCEED":
+                image_url = data["images"][0]["image_url"]
+                img = await client.get(image_url)
+                img.raise_for_status()
+                log_usage(service="novita", model=NOVITA_MODEL, count=1, cost_usd=0.004)
+                return img.content
+
+            if status in ("TASK_STATUS_FAILED", "TASK_STATUS_CANCELED"):
+                raise RuntimeError(f"NovitaAI task failed: {data}")
+
+        raise TimeoutError("NovitaAI generation timed out after 90s")
+
+
+# ---------------------------------------------------------------------------
+# fal.ai fallback (SFW / NovitaAI 未設定時)
+# ---------------------------------------------------------------------------
+
+async def _generate_fal(prompt: str, erotic: bool) -> bytes:
+    model = IMAGE_MODEL_NSFW if erotic else IMAGE_MODEL_SFW
     headers = {
         "Authorization": f"Key {FAL_API_KEY}",
         "Content-Type": "application/json",
     }
-    # realistic-vision はステップ35推奨/CFG 5、flux/dev は28/3.5。
-    # エロは realistic-vision に最適化したパラメータを優先。
     if erotic:
         payload = {
             "prompt": prompt,
-            "negative_prompt": NEGATIVE_PROMPT,
+            "negative_prompt": NEGATIVE_PROMPT_NSFW,
             "image_size": IMAGE_SIZE,
             "num_inference_steps": 35,
             "num_images": 1,
@@ -98,15 +169,34 @@ async def generate_image(context: str = "", erotic: bool = False) -> bytes | Non
             "guidance_scale": 3.5,
         }
 
-    endpoint = f"https://fal.run/{model}"
-
     async with httpx.AsyncClient(timeout=120) as client:
-        response = await client.post(endpoint, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-
-        image_url = data["images"][0]["url"]
-        img_response = await client.get(image_url)
-        img_response.raise_for_status()
+        resp = await client.post(f"https://fal.run/{model}", headers=headers, json=payload)
+        resp.raise_for_status()
+        image_url = resp.json()["images"][0]["url"]
+        img = await client.get(image_url)
+        img.raise_for_status()
         log_usage(service="fal", model=model, count=1, cost_usd=fal_cost(1))
-        return img_response.content
+        return img.content
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+async def generate_image(context: str = "", erotic: bool = False) -> bytes | None:
+    prompt = _build_erotic_prompt(context) if erotic else _build_contextual_prompt(context)
+    use_novita = erotic and bool(NOVITA_API_KEY)
+
+    logger.info(
+        f"Generating image (erotic={erotic}, backend={'novita' if use_novita else 'fal'}) "
+        f"prompt: {prompt[:100]}..."
+    )
+
+    try:
+        if use_novita:
+            return await _generate_novita(prompt)
+        else:
+            return await _generate_fal(prompt, erotic)
+    except Exception as e:
+        logger.error(f"Image generation failed: {e}")
+        return None

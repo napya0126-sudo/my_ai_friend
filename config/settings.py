@@ -38,6 +38,11 @@ IMAGE_STEPS = 28
 IMAGE_MODEL_SFW = os.getenv("IMAGE_MODEL_SFW", "fal-ai/flux/dev")
 IMAGE_MODEL_NSFW = os.getenv("IMAGE_MODEL_NSFW", "fal-ai/realistic-vision")
 
+# NovitaAI — NSFW 特化画像生成。NOVITA_API_KEY があれば erotic 生成に使う。
+NOVITA_API_KEY = os.getenv("NOVITA_API_KEY", "")
+# NovitaAI のモデル名。chilloutmix / epicrealism 等が NSFW に実績あり。
+NOVITA_MODEL = os.getenv("NOVITA_MODEL", "epicrealism_naturalSinRC1VAE.safetensors")
+
 # Naoya's context files (Google Drive local sync)
 GDRIVE_BASE = Path.home() / "My Drive"
 PROFILE_PATH = GDRIVE_BASE / "02_Personal" / "profile.md"
