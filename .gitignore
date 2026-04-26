@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+data/conversations/
+data/lena.db
+data/modes/
+.venv/
+venv/
+*.egg-info/
+dist/
+.DS_Store
