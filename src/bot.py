@@ -84,8 +84,7 @@ def _sync_telegram_chat_with_mode(user_id: int, update: Update) -> None:
 def _help_text() -> str:
     t = HELP_TEXT
     if TELEGRAM_EROTIC_CHAT_ID is not None:
-        t += "\n\n<i>🔐 エロ専用の別Telegram（スーパーグループ）を .env の TELEGRAM_EROTIC_CHAT_ID で有効中。"
-        " エロ会話はそちらでのみ行えます。</i>"
+        t += "\n\n<i>🔐 エロ専用の別Telegram（スーパーグループ）を .env の TELEGRAM_EROTIC_CHAT_ID で有効中。エロ会話はそちらでのみ行えます。</i>"
     return t
 
 

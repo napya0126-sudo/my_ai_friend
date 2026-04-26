@@ -33,6 +33,10 @@ MAX_HISTORY_MESSAGES = 12
 
 IMAGE_SIZE = "landscape_4_3"
 IMAGE_STEPS = 28
+# fal.ai のモデルエンドポイント。通常用と NSFW 用を分けられる。
+# realistic-vision は enable_safety_checker=false で安定して NSFW 生成可能。
+IMAGE_MODEL_SFW = os.getenv("IMAGE_MODEL_SFW", "fal-ai/flux/dev")
+IMAGE_MODEL_NSFW = os.getenv("IMAGE_MODEL_NSFW", "fal-ai/realistic-vision")
 
 # Naoya's context files (Google Drive local sync)
 GDRIVE_BASE = Path.home() / "My Drive"

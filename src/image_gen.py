@@ -1,6 +1,9 @@
 import httpx
 import logging
-from config.settings import FAL_API_KEY, IMAGE_SIZE, IMAGE_STEPS
+from config.settings import (
+    FAL_API_KEY, IMAGE_SIZE, IMAGE_STEPS,
+    IMAGE_MODEL_SFW, IMAGE_MODEL_NSFW,
+)
 from config.character import IMAGE_PROMPT_BASE
 from src.db import log_usage
 from src.pricing import fal_cost
@@ -64,33 +67,46 @@ def _build_contextual_prompt(context: str) -> str:
 
 async def generate_image(context: str = "", erotic: bool = False) -> bytes | None:
     prompt = _build_erotic_prompt(context) if erotic else _build_contextual_prompt(context)
-    logger.info(f"Generating image (erotic={erotic}) with prompt: {prompt[:120]}...")
+    model = IMAGE_MODEL_NSFW if erotic else IMAGE_MODEL_SFW
+    logger.info(f"Generating image (erotic={erotic}, model={model}) with prompt: {prompt[:120]}...")
 
     headers = {
         "Authorization": f"Key {FAL_API_KEY}",
         "Content-Type": "application/json",
     }
-    payload = {
-        "prompt": prompt,
-        "negative_prompt": NEGATIVE_PROMPT,
-        "image_size": IMAGE_SIZE,
-        "num_inference_steps": IMAGE_STEPS,
-        "num_images": 1,
-        "enable_safety_checker": False,
-        "guidance_scale": 3.5,
-    }
+    # realistic-vision はステップ35推奨/CFG 5、flux/dev は28/3.5。
+    # エロは realistic-vision に最適化したパラメータを優先。
+    if erotic:
+        payload = {
+            "prompt": prompt,
+            "negative_prompt": NEGATIVE_PROMPT,
+            "image_size": IMAGE_SIZE,
+            "num_inference_steps": 35,
+            "num_images": 1,
+            "enable_safety_checker": False,
+            "guidance_scale": 5.0,
+            "format": "jpeg",
+        }
+    else:
+        payload = {
+            "prompt": prompt,
+            "negative_prompt": NEGATIVE_PROMPT,
+            "image_size": IMAGE_SIZE,
+            "num_inference_steps": IMAGE_STEPS,
+            "num_images": 1,
+            "enable_safety_checker": False,
+            "guidance_scale": 3.5,
+        }
+
+    endpoint = f"https://fal.run/{model}"
 
     async with httpx.AsyncClient(timeout=120) as client:
-        response = await client.post(
-            "https://fal.run/fal-ai/flux/dev",
-            headers=headers,
-            json=payload,
-        )
+        response = await client.post(endpoint, headers=headers, json=payload)
         response.raise_for_status()
         data = response.json()
 
         image_url = data["images"][0]["url"]
         img_response = await client.get(image_url)
         img_response.raise_for_status()
-        log_usage(service="fal", model="flux-dev", count=1, cost_usd=fal_cost(1))
+        log_usage(service="fal", model=model, count=1, cost_usd=fal_cost(1))
         return img_response.content
