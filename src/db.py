@@ -75,7 +75,6 @@ def init_db() -> None:
                 ts            INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, id);
-            CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(user_id, channel, id);
             CREATE INDEX IF NOT EXISTS idx_sessions_user_date ON sessions(user_id, session_date);
             CREATE INDEX IF NOT EXISTS idx_raw_logs_session ON raw_logs(user_id, session_date, turn_index);
             CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage(ts);
@@ -236,16 +235,16 @@ def add_correction(user_id: int, original: str, corrected: str, category: str) -
 
 
 def _migrate_add_channel_column() -> None:
-    """One-time: add 'channel' column to existing messages table if missing."""
+    """Add 'channel' column to legacy messages table if missing; ensure channel index."""
     with _conn() as conn:
         cols = [row[1] for row in conn.execute("PRAGMA table_info(messages)").fetchall()]
         if "channel" not in cols:
             conn.execute("ALTER TABLE messages ADD COLUMN channel TEXT DEFAULT 'general'")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_messages_channel "
-                "ON messages(user_id, channel, id)"
-            )
             print("[DB] Migrated: added 'channel' column to messages")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_channel "
+            "ON messages(user_id, channel, id)"
+        )
 
 
 def _migrate_from_json() -> None:
