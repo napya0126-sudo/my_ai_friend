@@ -10,3 +10,6 @@ venv/
 *.egg-info/
 dist/
 .DS_Store
+
+# NSFWシーンプロンプト（ローカル専用・GitHubにpushしないこと）
+config/nsfw_scenes.py

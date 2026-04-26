@@ -9,37 +9,25 @@ logger = logging.getLogger(__name__)
 
 NEGATIVE_PROMPT = (
     "blurry, low quality, deformed, ugly, bad anatomy, watermark, text, "
-    "cartoon, anime, extra limbs, mutated, clothed, censored, underwear visible"
+    "cartoon, anime, extra limbs, mutated, censored, mosaic, pixelated genitals"
 )
 
 NSFW_KEYWORDS = ["sex", "naked", "nude", "undress", "underwear", "erotic", "porn",
                  "裸", "セックス", "エロ", "下着", "ヌード", "脱い"]
 
-# Map action keywords → explicit image prompt fragments.
-# Order matters: more specific patterns first.
-EROTIC_ACTION_MAP = [
-    (("mouth", "suck", "lick him", "tongue", "kneel", "throat", "blowjob", "deepthroat"),
-     "fully nude woman kneeling between his legs, oral sex, explicit blowjob, bare breasts visible, intimate pov, close-up of her face"),
-    (("rides", "riding", "cowgirl", "on top of him", "straddl", "bouncing"),
-     "fully nude woman in cowgirl position, riding him, bare breasts exposed, explicit sex, view from below"),
-    (("from behind", "doggy", "ass up", "bent over", "all fours"),
-     "fully nude woman on all fours, doggy style position, explicit sex from behind, bare ass and back exposed"),
-    (("missionary", "legs around", "underneath him", "on her back"),
-     "fully nude woman lying on her back, legs spread, missionary sex position, bare body fully exposed"),
-    (("fingers", "fingering", "rubs her", "touches herself", "clit"),
-     "fully nude woman touching herself, fingers between her legs, bare body, explicit solo"),
-    (("kiss", "lips", "tongues"),
-     "nude woman in passionate kiss, bare body close-up, intimate"),
-    (("breast", "nipple", "chest", "topless"),
-     "topless woman, bare breasts fully exposed, nipples visible, sensual"),
-    (("undress", "strip", "unbutton", "bra", "panties", "lingerie"),
-     "woman removing lingerie, half-nude, bra falling off, bare breasts being revealed"),
-]
+# NSFWシーン別プロンプトはローカル専用の config/nsfw_scenes.py から読み込む。
+# そのファイルは .gitignore 済みで GitHub には存在しない。
+# ファイルがない環境では空リストにフォールバックし、汎用プロンプトが使われる。
+# シーンを追加・編集したい場合は config/nsfw_scenes.py を直接編集すること。
+try:
+    from config.nsfw_scenes import NSFW_SCENE_MAP
+except ImportError:
+    NSFW_SCENE_MAP = []
 
 
 def _erotic_scene_modifiers(context: str) -> str:
     text = context.lower()
-    for keywords, fragment in EROTIC_ACTION_MAP:
+    for keywords, fragment in NSFW_SCENE_MAP:
         if any(kw in text for kw in keywords):
             return fragment
     return "fully nude woman, completely naked, bare body exposed, sensual intimate pose"

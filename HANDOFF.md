@@ -43,7 +43,8 @@ myaifriend/
 │
 ├── config/
 │   ├── character.py         # Lenaのシステムプロンプト全文 + 画像プロンプトベース
-│   └── settings.py          # 環境変数、モデルID、Google Driveパス定義
+│   ├── settings.py          # 環境変数、モデルID、Google Driveパス定義
+│   └── nsfw_scenes.py       # ★ローカル専用★ NSFWシーン別画像プロンプト（後述）
 │
 ├── src/
 │   ├── bot.py               # Telegramハンドラ、コマンド定義、フォーマット処理
@@ -57,6 +58,58 @@ myaifriend/
     ├── conversations/       # ユーザーIDごとの会話履歴JSON
     └── modes/               # ユーザーIDごとの現在モードJSON
 ```
+
+---
+
+## NSFWシーンプロンプトの管理（AIエージェント向け重要事項）
+
+### 仕組み
+
+`src/image_gen.py` は起動時に `config/nsfw_scenes.py` を `try/except` でインポートする。
+
+```python
+try:
+    from config.nsfw_scenes import NSFW_SCENE_MAP
+except ImportError:
+    NSFW_SCENE_MAP = []  # ファイルがない場合は汎用プロンプトにフォールバック
+```
+
+### config/nsfw_scenes.py の位置づけ
+
+- **GitHubには存在しない**（`.gitignore` に明示済み）
+- **ローカルのみに置くファイル**
+- GitHub上のコードは `NSFW_SCENE_MAP = []` のフォールバックで動作する（エラーにならない）
+
+### シーンを追加・修正したい場合
+
+`config/nsfw_scenes.py` を直接編集する。フォーマットは以下の通り：
+
+```python
+NSFW_SCENE_MAP = [
+    (
+        ("キーワード1", "キーワード2", ...),  # 会話文脈にこれが含まれたら発動
+        "fal.aiに渡すプロンプトフラグメント",
+    ),
+    ...
+]
+```
+
+- リストの先頭ほど優先度が高い（具体的なシーンを先に書く）
+- このフラグメントは `config/character.py` の `IMAGE_PROMPT_BASE` の後ろに連結される
+- **このファイルをGitHubにpushしてはいけない**
+
+### 現在定義されているシーン（ローカル環境）
+
+| シーン | 発動キーワード例 |
+|--------|----------------|
+| フェラ | blowjob, oral, フェラ, 咥え |
+| バック（ドッグスタイル） | doggy, from behind, バック |
+| 正常位 | missionary, on her back, 正常位 |
+| 騎乗位 | cowgirl, riding, 騎乗位 |
+| 指・セルフプレジャー | fingering, touches herself, オナニー |
+| キス | kiss, lips |
+| 胸・トップレス | breast, nipple, topless, 胸 |
+| 脱衣・下着 | undress, strip, lingerie, 下着 |
 
 ---
 
